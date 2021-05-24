@@ -105,6 +105,8 @@ private:
 
 	String created_folder_path;
 
+	String random_project_name;
+
 	void set_message(const String &p_msg, MessageType p_type = MESSAGE_SUCCESS, InputType input_type = PROJECT_PATH) {
 		msg->set_text(p_msg);
 		Ref<Texture2D> current_path_icon = status_rect->get_texture();
@@ -289,6 +291,15 @@ private:
 		return valid_path;
 	}
 
+	void _check_use_generated_project() {
+		String project_name_text = project_name->get_text().strip_edges();
+		String project_path_text = project_path->get_text().strip_edges();
+		if (project_name_text == "" && project_path_text == "") {
+			set_message(vformat(TTR("Project will be created in the default project directory with a random name: %s"), random_project_name), MESSAGE_WARNING);
+			get_ok_button()->set_disabled(false);
+		}
+	}
+
 	void _path_text_changed(const String &p_path) {
 		String sp = _test_path();
 		if (sp != "") {
@@ -308,6 +319,8 @@ private:
 				_text_changed(sp);
 			}
 		}
+
+		_check_use_generated_project();
 
 		if (created_folder_path != "" && created_folder_path != p_path) {
 			_remove_created_folder();
@@ -416,6 +429,8 @@ private:
 		if (p_text.strip_edges() == "") {
 			set_message(TTR("It would be a good idea to name your project."), MESSAGE_ERROR);
 		}
+
+		_check_use_generated_project();
 	}
 
 	void _nonempty_confirmation_ok_pressed() {
@@ -424,6 +439,7 @@ private:
 	}
 
 	void ok_pressed() override {
+		String project_name_string = project_name->get_text().strip_edges();
 		String dir = project_path->get_text();
 
 		if (mode == MODE_RENAME) {
@@ -440,7 +456,7 @@ private:
 				set_message(vformat(TTR("Couldn't load project.godot in project path (error %d). It may be missing or corrupted."), err), MESSAGE_ERROR);
 			} else {
 				ProjectSettings::CustomMap edited_settings;
-				edited_settings["application/config/name"] = project_name->get_text().strip_edges();
+				edited_settings["application/config/name"] = project_name_string;
 
 				if (current->save_custom(dir2.plus_file("project.godot"), edited_settings, Vector<String>(), true) != OK) {
 					set_message(TTR("Couldn't edit project.godot in project path."), MESSAGE_ERROR);
@@ -461,6 +477,26 @@ private:
 
 			} else {
 				if (mode == MODE_NEW) {
+					if (dir.strip_edges() == "") {
+						project_name_string = random_project_name;
+						String random_project_path_name = random_project_name.to_lower().replace(" ", "_").replace("#", "");
+						DirAccess *d = DirAccess::create(DirAccess::ACCESS_FILESYSTEM);
+						if (d->change_dir(fav_dir) == OK) {
+							if (!d->dir_exists(random_project_path_name)) {
+								if (d->make_dir(random_project_path_name) == OK) {
+									d->change_dir(random_project_path_name);
+									dir = d->get_current_dir();
+								} else {
+									dialog_error->set_text(TTR("Couldn't create folder."));
+									dialog_error->popup_centered();
+								}
+							} else {
+								dialog_error->set_text(TTR("There is already a folder in this path with the specified name."));
+								dialog_error->popup_centered();
+							}
+						}
+						is_folder_empty = true;
+					}
 					// Before we create a project, check that the target folder is empty.
 					// If not, we need to ask the user if they're sure they want to do this.
 					if (!is_folder_empty) {
@@ -481,7 +517,7 @@ private:
 						initial_settings["rendering/textures/vram_compression/import_etc2"] = false;
 						initial_settings["rendering/textures/vram_compression/import_etc"] = true;
 					}
-					initial_settings["application/config/name"] = project_name->get_text().strip_edges();
+					initial_settings["application/config/name"] = project_name_string;
 					initial_settings["application/config/icon"] = "res://icon.png";
 					initial_settings["rendering/environment/defaults/default_environment"] = "res://default_env.tres";
 
@@ -755,6 +791,8 @@ public:
 			} else if (mode == MODE_NEW) {
 				set_title(TTR("Create New Project"));
 				get_ok_button()->set_text(TTR("Create & Edit"));
+				int generated_identifier = Math::random(0, 65535);
+				random_project_name = vformat(TTR("New Project #%04X"), generated_identifier);
 				name_container->show();
 				install_path_container->hide();
 				rasterizer_container->show();
