@@ -104,6 +104,7 @@ private:
 	String fav_dir;
 
 	String created_folder_path;
+	String path_being_renamed;
 
 	void set_message(const String &p_msg, MessageType p_type = MESSAGE_SUCCESS, InputType input_type = PROJECT_PATH) {
 		msg->set_text(p_msg);
@@ -290,6 +291,17 @@ private:
 	}
 
 	void _path_text_changed(const String &p_path) {
+		if (mode == MODE_RENAME) {
+			const String new_project_error_msg = TTR("New project path must stay in same directory.");
+			if (p_path.get_base_dir() != path_being_renamed.get_base_dir()) {
+				set_message(new_project_error_msg, MESSAGE_ERROR);
+				get_ok_button()->set_disabled(true);
+			} else if (msg->get_text() == new_project_error_msg) {
+				set_message("");
+				get_ok_button()->set_disabled(false);
+			}
+			return;
+		}
 		String sp = _test_path();
 		if (sp != "") {
 			// If the project name is empty or default, infer the project name from the selected folder name
@@ -423,32 +435,74 @@ private:
 		ok_pressed();
 	}
 
+	void remove_from_project_list(String p_dir) {
+		p_dir = p_dir.get_base_dir() + "/" + p_dir.get_file();
+		String proj = get_project_key_from_path(p_dir);
+		EditorSettings::get_singleton()->erase("projects/" + proj);
+		EditorSettings::get_singleton()->erase("favorite_projects/" + proj);
+		EditorSettings::get_singleton()->save();
+	}
+
+	void add_to_project_list(String p_dir) {
+		p_dir = p_dir.get_base_dir() + "/" + p_dir.get_file();
+		String proj = get_project_key_from_path(p_dir);
+		EditorSettings::get_singleton()->set("projects/" + proj, p_dir);
+		EditorSettings::get_singleton()->save();
+	}
+
 	void ok_pressed() override {
 		String dir = project_path->get_text();
 
 		if (mode == MODE_RENAME) {
-			String dir2 = _test_path();
-			if (dir2 == "") {
-				set_message(TTR("Invalid project path (changed anything?)."), MESSAGE_ERROR);
+			// Move Project Path
+			dir = path_being_renamed;
+			String current_project_path_dir = dir.get_base_dir();
+			String current_project_path_name = dir.get_file();
+			String new_project_path = project_path->get_text().strip_edges();
+			String new_project_path_name = new_project_path.get_file();
+
+			if (new_project_path.get_base_dir() != current_project_path_dir) {
+				set_message(TTR("New project path must stay in same directory."), MESSAGE_ERROR);
 				return;
 			}
 
+			if (new_project_path_name != current_project_path_name) {
+				DirAccess *da = DirAccess::create(DirAccess::ACCESS_FILESYSTEM);
+				if (da->dir_exists(new_project_path)) {
+					set_message(TTR("Path already exists."), MESSAGE_ERROR);
+					return;
+				}
+				if (da->rename(dir, new_project_path) != OK) {
+					set_message(TTR("Couldn't rename project path."), MESSAGE_ERROR);
+					return;
+				}
+				remove_from_project_list(dir);
+				add_to_project_list(new_project_path);
+
+				dir = new_project_path;
+			}
+
+			// Change Project Name
 			ProjectSettings *current = memnew(ProjectSettings);
 
-			int err = current->setup(dir2, "");
+			int err = current->setup(dir, "");
 			if (err != OK) {
 				set_message(vformat(TTR("Couldn't load project.godot in project path (error %d). It may be missing or corrupted."), err), MESSAGE_ERROR);
-			} else {
-				ProjectSettings::CustomMap edited_settings;
-				edited_settings["application/config/name"] = project_name->get_text().strip_edges();
+				return;
+			}
+			ProjectSettings::CustomMap edited_settings;
+			edited_settings["application/config/name"] = project_name->get_text().strip_edges();
 
-				if (current->save_custom(dir2.plus_file("project.godot"), edited_settings, Vector<String>(), true) != OK) {
-					set_message(TTR("Couldn't edit project.godot in project path."), MESSAGE_ERROR);
-				}
+			if (current->save_custom(dir.plus_file("project.godot"), edited_settings, Vector<String>(), true) != OK) {
+				set_message(TTR("Couldn't edit project.godot in project path."), MESSAGE_ERROR);
+				return;
 			}
 
 			hide();
 			emit_signal(SNAME("projects_updated"));
+			if (new_project_path_name != current_project_path_name) {
+				emit_signal(SNAME("project_moved"), new_project_path);
+			}
 
 		} else {
 			if (mode == MODE_IMPORT) {
@@ -602,13 +656,7 @@ private:
 				}
 			}
 
-			dir = dir.replace("\\", "/");
-			if (dir.ends_with("/")) {
-				dir = dir.substr(0, dir.length() - 1);
-			}
-			String proj = get_project_key_from_path(dir);
-			EditorSettings::get_singleton()->set("projects/" + proj, dir);
-			EditorSettings::get_singleton()->save();
+			add_to_project_list(dir);
 
 			hide();
 			emit_signal(SNAME("project_created"), dir);
@@ -660,6 +708,7 @@ protected:
 		ClassDB::bind_method("_install_path_selected", &ProjectDialog::_install_path_selected);
 		ClassDB::bind_method("_browse_install_path", &ProjectDialog::_browse_install_path);
 		ADD_SIGNAL(MethodInfo("project_created"));
+		ADD_SIGNAL(MethodInfo("project_moved"));
 		ADD_SIGNAL(MethodInfo("projects_updated"));
 	}
 
@@ -681,7 +730,8 @@ public:
 
 	void show_dialog() {
 		if (mode == MODE_RENAME) {
-			project_path->set_editable(false);
+			path_being_renamed = project_path->get_text();
+			project_path->set_editable(true);
 			browse->hide();
 			install_browse->hide();
 
@@ -689,7 +739,8 @@ public:
 			get_ok_button()->set_text(TTR("Rename"));
 			name_container->show();
 			status_rect->hide();
-			msg->hide();
+			msg->show();
+			set_message("");
 			install_path_container->hide();
 			install_status_rect->hide();
 			rasterizer_container->hide();
@@ -1998,6 +2049,15 @@ void ProjectManager::_on_projects_updated() {
 	_project_list->update_dock_menu();
 }
 
+void ProjectManager::_on_project_moved(const String &new_dir) {
+	search_box->clear();
+	int i = _project_list->refresh_project(new_dir);
+	_project_list->select_project(i);
+	_project_list->ensure_project_visible(i);
+
+	_project_list->update_dock_menu();
+}
+
 void ProjectManager::_on_project_created(const String &dir) {
 	search_box->clear();
 	int i = _project_list->refresh_project(dir);
@@ -2707,6 +2767,7 @@ ProjectManager::ProjectManager() {
 
 		npdialog = memnew(ProjectDialog);
 		npdialog->connect("projects_updated", callable_mp(this, &ProjectManager::_on_projects_updated));
+		npdialog->connect("project_moved", callable_mp(this, &ProjectManager::_on_project_moved));
 		npdialog->connect("project_created", callable_mp(this, &ProjectManager::_on_project_created));
 		add_child(npdialog);
 

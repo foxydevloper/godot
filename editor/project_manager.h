@@ -113,6 +113,7 @@ class ProjectManager : public Control {
 
 	void _load_recent_projects();
 	void _on_project_created(const String &dir);
+	void _on_project_moved(const String &new_dir);
 	void _on_projects_updated();
 	void _scan_multiple_folders(PackedStringArray p_files);
 	void _scan_begin(const String &p_base);
