@@ -5923,12 +5923,12 @@ CanvasItemEditor::CanvasItemEditor(EditorNode *p_editor) {
 	group_button = memnew(ToolButton);
 	hb->add_child(group_button);
 	group_button->connect("pressed", this, "_popup_callback", varray(GROUP_SELECTED));
-	group_button->set_tooltip(TTR("Makes sure the object's children are not selectable."));
+	group_button->set_tooltip(TTR("Make selected node's children not selectable."));
 
 	ungroup_button = memnew(ToolButton);
 	hb->add_child(ungroup_button);
 	ungroup_button->connect("pressed", this, "_popup_callback", varray(UNGROUP_SELECTED));
-	ungroup_button->set_tooltip(TTR("Restores the object's children's ability to be selected."));
+	ungroup_button->set_tooltip(TTR("Make selected node's children selectable."));
 
 	hb->add_child(memnew(VSeparator));
 
