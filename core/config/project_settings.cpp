@@ -985,6 +985,9 @@ bool ProjectSettings::property_can_revert(const String &p_name) {
 	if (!props.has(p_name)) {
 		return false;
 	}
+	if (p_name == "application/config/name" || p_name == "application/config/description") {
+		return false;
+	}
 
 	return props[p_name].initial != props[p_name].variant;
 }
