@@ -41,6 +41,7 @@
 #include "editor/editor_settings.h"
 #include "editor/plugins/animation_player_editor_plugin.h"
 #include "editor/plugins/script_editor_plugin.h"
+#include "scene/2d/audio_stream_player_2d.h"
 #include "scene/2d/gpu_particles_2d.h"
 #include "scene/2d/light_2d.h"
 #include "scene/2d/polygon_2d.h"
@@ -53,6 +54,7 @@
 #include "scene/main/canvas_layer.h"
 #include "scene/main/window.h"
 #include "scene/resources/packed_scene.h"
+#include "servers/audio/audio_stream.h"
 
 // Min and Max are power of two in order to play nicely with successive increment.
 // That way, we can naturally reach a 100% zoom from boundaries.
@@ -5718,35 +5720,39 @@ void CanvasItemEditorViewport::_on_change_type_closed() {
 }
 
 void CanvasItemEditorViewport::_create_preview(const Vector<String> &files) const {
-	bool add_preview = false;
 	for (int i = 0; i < files.size(); i++) {
 		String path = files[i];
 		RES res = ResourceLoader::load(path);
 		ERR_FAIL_COND(res.is_null());
-		Ref<Texture2D> texture = Ref<Texture2D>(Object::cast_to<Texture2D>(*res));
-		Ref<PackedScene> scene = Ref<PackedScene>(Object::cast_to<PackedScene>(*res));
-		if (texture != nullptr || scene != nullptr) {
-			if (texture != nullptr) {
-				Sprite2D *sprite = memnew(Sprite2D);
-				sprite->set_texture(texture);
-				sprite->set_modulate(Color(1, 1, 1, 0.7f));
-				preview_node->add_child(sprite);
-				label->show();
-				label_desc->show();
-			} else {
-				if (scene.is_valid()) {
-					Node *instance = scene->instantiate();
-					if (instance) {
-						preview_node->add_child(instance);
-					}
-				}
+		Ref<Texture2D> texture = Object::cast_to<Texture2D>(*res);
+		Ref<AudioStream> audio_stream = Object::cast_to<AudioStream>(*res);
+		Ref<PackedScene> scene = Object::cast_to<PackedScene>(*res);
+		if (texture != nullptr) {
+			Sprite2D *sprite = memnew(Sprite2D);
+			sprite->set_texture(texture);
+			sprite->set_modulate(Color(1, 1, 1, 0.7f));
+			preview_node->add_child(sprite);
+			label->show();
+			label_desc->show();
+			label_desc->set_text(TTR("Drag and drop to add node as child of selected node.\nHold Shift when dropping to add node as sibling.\nHold Alt when dropping to add node as different type."));
+		} else if (audio_stream != nullptr) {
+			AudioStreamPlayer2D *player_2d = memnew(AudioStreamPlayer2D);
+			player_2d->set_modulate(Color(1, 1, 1, 0.7f));
+			preview_node->add_child(player_2d);
+			label->show();
+			label_desc->show();
+		} else if (scene != nullptr) {
+			Node *instance = scene->instantiate();
+			if (instance) {
+				preview_node->add_child(instance);
 			}
-			add_preview = true;
 		}
-	}
-
-	if (add_preview) {
-		editor->get_scene_root()->add_child(preview_node);
+		if (audio_stream != nullptr || scene != nullptr) {
+			label_desc->set_text(TTR("Drag and drop to add node as child of selected node.\nHold Shift when dropping to add node as sibling."));
+		}
+		if (texture != nullptr || audio_stream != nullptr || scene != nullptr) {
+			editor->get_scene_root()->add_child(preview_node);
+		}
 	}
 }
 
@@ -5781,8 +5787,9 @@ bool CanvasItemEditorViewport::_cyclical_dependency_exists(const String &p_targe
 
 void CanvasItemEditorViewport::_create_nodes(Node *parent, Node *child, String &path, const Point2 &p_point) {
 	child->set_name(path.get_file().get_basename());
-	Ref<Texture2D> texture = Ref<Texture2D>(Object::cast_to<Texture2D>(ResourceCache::get(path)));
-	Size2 texture_size = texture->get_size();
+
+	Ref<Texture2D> texture = Object::cast_to<Texture2D>(ResourceCache::get(path));
+	Ref<AudioStream> audio_stream = Object::cast_to<AudioStream>(ResourceCache::get(path));
 
 	if (parent) {
 		editor_data->get_undo_redo().add_do_method(parent, "add_child", child);
@@ -5803,28 +5810,35 @@ void CanvasItemEditorViewport::_create_nodes(Node *parent, Node *child, String &
 		editor_data->get_undo_redo().add_undo_method(ed, "live_debug_remove_node", NodePath(String(editor->get_edited_scene()->get_path_to(parent)) + "/" + new_name));
 	}
 
-	// handle with different property for texture
-	String property = "texture";
-	List<PropertyInfo> props;
-	child->get_property_list(&props);
-	for (const PropertyInfo &E : props) {
-		if (E.name == "config/texture") { // Particles2D
-			property = "config/texture";
-			break;
-		} else if (E.name == "texture/texture") { // Polygon2D
-			property = "texture/texture";
-			break;
-		} else if (E.name == "normal") { // TouchScreenButton
-			property = "normal";
-			break;
+	String node_class = child->get_class();
+	if (node_class == "AudioStreamPlayer2D") {
+		editor_data->get_undo_redo().add_do_property(child, "stream", audio_stream);
+	} else {
+		// handle with different property for texture
+		String property = "texture";
+		List<PropertyInfo> props;
+		child->get_property_list(&props);
+		for (const PropertyInfo &E : props) {
+			if (E.name == "config/texture") { // Particles2D
+				property = "config/texture";
+				break;
+			} else if (E.name == "texture/texture") { // Polygon2D
+				property = "texture/texture";
+				break;
+			} else if (E.name == "normal") { // TouchScreenButton
+				property = "normal";
+				break;
+			}
 		}
+		editor_data->get_undo_redo().add_do_property(child, property, texture);
 	}
-	editor_data->get_undo_redo().add_do_property(child, property, texture);
 
 	// make visible for certain node type
-	if (default_type == "NinePatchRect") {
+	if (node_class == "NinePatchRect") {
+		Size2 texture_size = texture->get_size();
 		editor_data->get_undo_redo().add_do_property(child, "rect/size", texture_size);
-	} else if (default_type == "Polygon2D") {
+	} else if (node_class == "Polygon2D") {
+		Size2 texture_size = texture->get_size();
 		Vector<Vector2> list;
 		list.push_back(Vector2(0, 0));
 		list.push_back(Vector2(texture_size.width, 0));
@@ -5908,7 +5922,7 @@ void CanvasItemEditorViewport::_perform_drop_data() {
 		if (res.is_null()) {
 			continue;
 		}
-		Ref<PackedScene> scene = Ref<PackedScene>(Object::cast_to<PackedScene>(*res));
+		Ref<PackedScene> scene = Object::cast_to<PackedScene>(*res);
 		if (scene != nullptr && scene.is_valid()) {
 			if (!target_node) {
 				// Without root node act the same as "Load Inherited Scene"
@@ -5923,7 +5937,8 @@ void CanvasItemEditorViewport::_perform_drop_data() {
 				}
 			}
 		} else {
-			Ref<Texture2D> texture = Ref<Texture2D>(Object::cast_to<Texture2D>(*res));
+			Ref<Texture2D> texture = Object::cast_to<Texture2D>(*res);
+			Ref<AudioStream> audio_stream = Object::cast_to<AudioStream>(*res);
 			if (texture != nullptr && texture.is_valid()) {
 				Node *child;
 				if (default_type == "Light2D") {
@@ -5942,6 +5957,9 @@ void CanvasItemEditorViewport::_perform_drop_data() {
 					child = memnew(Sprite2D); // default
 				}
 
+				_create_nodes(target_node, child, path, drop_pos);
+			} else if (audio_stream != nullptr) {
+				Node *child = memnew(AudioStreamPlayer2D);
 				_create_nodes(target_node, child, path, drop_pos);
 			}
 		}
@@ -5962,50 +5980,47 @@ void CanvasItemEditorViewport::_perform_drop_data() {
 
 bool CanvasItemEditorViewport::can_drop_data(const Point2 &p_point, const Variant &p_data) const {
 	Dictionary d = p_data;
-	if (d.has("type")) {
-		if (String(d["type"]) == "files") {
-			Vector<String> files = d["files"];
-			bool can_instantiate = false;
-			for (int i = 0; i < files.size(); i++) { // check if dragged files contain resource or scene can be created at least once
-				RES res = ResourceLoader::load(files[i]);
-				if (res.is_null()) {
-					continue;
-				}
-				String type = res->get_class();
-				if (type == "PackedScene") {
-					Ref<PackedScene> sdata = Ref<PackedScene>(Object::cast_to<PackedScene>(*res));
-					Node *instantiated_scene = sdata->instantiate(PackedScene::GEN_EDIT_STATE_INSTANCE);
-					if (!instantiated_scene) {
-						continue;
-					}
-					memdelete(instantiated_scene);
-				} else if (type == "Texture2D" ||
-						   type == "ImageTexture" ||
-						   type == "ViewportTexture" ||
-						   type == "CurveTexture" ||
-						   type == "GradientTexture" ||
-						   type == "StreamTexture2D" ||
-						   type == "AtlasTexture") {
-					Ref<Texture2D> texture = Ref<Texture2D>(Object::cast_to<Texture2D>(*res));
-					if (!texture.is_valid()) {
-						continue;
-					}
-				} else {
-					continue;
-				}
-				can_instantiate = true;
-				break;
+	if (d.has("type") && String(d["type"]) == "files") {
+		Vector<String> files = d["files"];
+		bool can_instantiate = false;
+		String drop_type;
+		for (int i = 0; i < files.size(); i++) { // check if dragged files contain resource or scene can be created at least once
+			RES res = ResourceLoader::load(files[i]);
+			if (res.is_null()) {
+				continue;
 			}
-			if (can_instantiate) {
-				if (!preview_node->get_parent()) { // create preview only once
-					_create_preview(files);
-				}
-				Transform2D trans = canvas_item_editor->get_canvas_transform();
-				preview_node->set_position((p_point - trans.get_origin()) / trans.get_scale().x);
-				label->set_text(vformat(TTR("Adding %s..."), default_type));
+			String type = res->get_class();
+			if (type == "PackedScene") {
+				drop_type = "scene";
+			} else if (type == "Texture2D" ||
+					   type == "ImageTexture" ||
+					   type == "ViewportTexture" ||
+					   type == "CurveTexture" ||
+					   type == "GradientTexture" ||
+					   type == "StreamTexture2D" ||
+					   type == "AtlasTexture") {
+				drop_type = "texture";
+			} else if (ClassDB::is_parent_class(type, "AudioStream")) {
+				drop_type = "audio_stream";
+			} else {
+				continue;
 			}
-			return can_instantiate;
+			can_instantiate = true;
+			break;
 		}
+		if (can_instantiate) {
+			if (!preview_node->get_parent()) { // create preview only once
+				_create_preview(files);
+			}
+			Transform2D trans = canvas_item_editor->get_canvas_transform();
+			preview_node->set_position((p_point - trans.get_origin()) / trans.get_scale().x);
+			if (drop_type == "texture") {
+				label->set_text(vformat(TTR("Adding %s..."), default_type));
+			} else if (drop_type == "audio_stream") {
+				label->set_text(vformat(TTR("Adding %s..."), "AudioStreamPlayer2D"));
+			}
+		}
+		return can_instantiate;
 	}
 	label->hide();
 	return false;
@@ -6145,7 +6160,6 @@ CanvasItemEditorViewport::CanvasItemEditorViewport(EditorNode *p_node, CanvasIte
 	canvas_item_editor->get_controls_container()->add_child(label);
 
 	label_desc = memnew(Label);
-	label_desc->set_text(TTR("Drag & drop + Shift : Add node as sibling\nDrag & drop + Alt : Change node type"));
 	label_desc->add_theme_color_override("font_color", Color(0.6f, 0.6f, 0.6f, 1));
 	label_desc->add_theme_color_override("font_shadow_color", Color(0.2f, 0.2f, 0.2f, 1));
 	label_desc->add_theme_constant_override("shadow_as_outline", 1 * EDSCALE);
