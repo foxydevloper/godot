@@ -5736,6 +5736,7 @@ void CanvasItemEditorViewport::_create_preview(const Vector<String> &files) cons
 			preview_node->add_child(sprite);
 			label->show();
 			label_desc->show();
+			label_desc->set_text(TTR("Drag and drop to add as child of current scene's root node.\nHold Ctrl when dropping to add as child of selected node.\nHold Shift when dropping to add as sibling of selected node.\nHold Alt when dropping to add as a different node type."));
 		} else if (audio_stream != nullptr) {
 			AudioStreamPlayer2D *player_2d = memnew(AudioStreamPlayer2D);
 			player_2d->set_modulate(Color(1, 1, 1, 0.7f));
@@ -5746,7 +5747,11 @@ void CanvasItemEditorViewport::_create_preview(const Vector<String> &files) cons
 			Node *instance = scene->instantiate();
 			if (instance) {
 				preview_node->add_child(instance);
+				label_desc->show();
 			}
+		}
+		if (audio_stream != nullptr || scene != nullptr) {
+			label_desc->set_text(TTR("Drag and drop to add as child of current scene's root node.\nHold Ctrl when dropping to add as child of selected node.\nHold Shift when dropping to add as sibling of selected node."));
 		}
 		if (texture != nullptr || audio_stream != nullptr || scene != nullptr) {
 			add_preview = true;
@@ -5986,10 +5991,8 @@ bool CanvasItemEditorViewport::can_drop_data(const Point2 &p_point, const Varian
 			preview_node->set_position((p_point - trans.get_origin()) / trans.get_scale().x);
 			if (drop_type == "texture") {
 				label->set_text(vformat(TTR("Adding %s..."), default_texture_node_type));
-				label_desc->set_text(TTR("Drag and drop to add node as child of selected node.\nHold Shift when dropping to add node as sibling.\nHold Alt when dropping to add node as different type."));
 			} else if (drop_type == "audio_stream") {
 				label->set_text(vformat(TTR("Adding %s..."), "AudioStreamPlayer2D"));
-				label_desc->set_text(TTR("Drag and drop to add node as child of selected node.\nHold Shift when dropping to add node as sibling."));
 			}
 		}
 		return can_instantiate;
@@ -6023,6 +6026,7 @@ bool CanvasItemEditorViewport::_only_packed_scenes_selected() const {
 
 void CanvasItemEditorViewport::drop_data(const Point2 &p_point, const Variant &p_data) {
 	bool is_shift = Input::get_singleton()->is_key_pressed(KEY_SHIFT);
+	bool is_ctrl = Input::get_singleton()->is_key_pressed(KEY_CTRL);
 	bool is_alt = Input::get_singleton()->is_key_pressed(KEY_ALT);
 
 	selected_files.clear();
@@ -6034,21 +6038,22 @@ void CanvasItemEditorViewport::drop_data(const Point2 &p_point, const Variant &p
 		return;
 	}
 
-	List<Node *> list = editor->get_editor_selection()->get_selected_node_list();
-	if (list.size() == 0) {
-		Node *root_node = editor->get_edited_scene();
+	List<Node *> selected_nodes = editor->get_editor_selection()->get_selected_node_list();
+	Node *root_node = editor->get_edited_scene();
+	if (selected_nodes.size() > 0) {
+		Node *selected_node = selected_nodes[0];
+		target_node = root_node;
+		if (is_ctrl) {
+			target_node = selected_node;
+		} else if (is_shift && selected_node != root_node) {
+			target_node = selected_node->get_parent();
+		}
+	} else {
 		if (root_node) {
-			list.push_back(root_node);
+			target_node = root_node;
 		} else {
 			drop_pos = p_point;
 			target_node = nullptr;
-		}
-	}
-
-	if (list.size() > 0) {
-		target_node = list[0];
-		if (is_shift && target_node != editor->get_edited_scene()) {
-			target_node = target_node->get_parent();
 		}
 	}
 
