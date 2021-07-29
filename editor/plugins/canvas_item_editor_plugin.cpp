@@ -5959,13 +5959,7 @@ bool CanvasItemEditorViewport::can_drop_data(const Point2 &p_point, const Varian
 						continue;
 					}
 					memdelete(instantiated_scene);
-				} else if (type == "Texture2D" ||
-						   type == "ImageTexture" ||
-						   type == "ViewportTexture" ||
-						   type == "CurveTexture" ||
-						   type == "GradientTexture" ||
-						   type == "StreamTexture2D" ||
-						   type == "AtlasTexture") {
+			} else if (ClassDB::is_parent_class(type, "Texture2D")) {
 					Ref<Texture2D> texture = Ref<Texture2D>(Object::cast_to<Texture2D>(*res));
 					if (!texture.is_valid()) {
 						continue;
