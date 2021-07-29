@@ -41,6 +41,7 @@
 #include "editor/editor_settings.h"
 #include "editor/plugins/animation_player_editor_plugin.h"
 #include "editor/plugins/script_editor_plugin.h"
+#include "scene/2d/cpu_particles_2d.h"
 #include "scene/2d/gpu_particles_2d.h"
 #include "scene/2d/light_2d.h"
 #include "scene/2d/polygon_2d.h"
@@ -5781,15 +5782,15 @@ bool CanvasItemEditorViewport::_cyclical_dependency_exists(const String &p_targe
 
 void CanvasItemEditorViewport::_create_nodes(Node *parent, Node *child, String &path, const Point2 &p_point) {
 	child->set_name(path.get_file().get_basename());
-	Ref<Texture2D> texture = Ref<Texture2D>(Object::cast_to<Texture2D>(ResourceCache::get(path)));
-	Size2 texture_size = texture->get_size();
+
+	Ref<Texture2D> texture = Object::cast_to<Texture2D>(ResourceCache::get(path));
 
 	if (parent) {
 		editor_data->get_undo_redo().add_do_method(parent, "add_child", child);
 		editor_data->get_undo_redo().add_do_method(child, "set_owner", editor->get_edited_scene());
 		editor_data->get_undo_redo().add_do_reference(child);
 		editor_data->get_undo_redo().add_undo_method(parent, "remove_child", child);
-	} else { // if we haven't parent, lets try to make a child as a parent.
+	} else { // If no parent is selected, set as root node of the scene.
 		editor_data->get_undo_redo().add_do_method(editor, "set_edited_scene", child);
 		editor_data->get_undo_redo().add_do_method(child, "set_owner", editor->get_edited_scene());
 		editor_data->get_undo_redo().add_do_reference(child);
@@ -5803,28 +5804,23 @@ void CanvasItemEditorViewport::_create_nodes(Node *parent, Node *child, String &
 		editor_data->get_undo_redo().add_undo_method(ed, "live_debug_remove_node", NodePath(String(editor->get_edited_scene()->get_path_to(parent)) + "/" + new_name));
 	}
 
-	// handle with different property for texture
-	String property = "texture";
-	List<PropertyInfo> props;
-	child->get_property_list(&props);
-	for (const PropertyInfo &E : props) {
-		if (E.name == "config/texture") { // Particles2D
-			property = "config/texture";
-			break;
-		} else if (E.name == "texture/texture") { // Polygon2D
-			property = "texture/texture";
-			break;
-		} else if (E.name == "normal") { // TouchScreenButton
-			property = "normal";
-			break;
+	String node_class = child->get_class();
+	if (node_class == "Polygon2D") {
+		editor_data->get_undo_redo().add_do_property(child, "texture/texture", texture);
+	} else if (node_class == "TouchScreenButton") {
+		editor_data->get_undo_redo().add_do_property(child, "normal", texture);
+	} else if (node_class == "TextureButton") {
+		editor_data->get_undo_redo().add_do_property(child, "texture_button", texture);
+	} else {
+		editor_data->get_undo_redo().add_do_property(child, "texture", texture);
 		}
-	}
-	editor_data->get_undo_redo().add_do_property(child, property, texture);
 
 	// make visible for certain node type
-	if (default_texture_node_type == "NinePatchRect") {
-		editor_data->get_undo_redo().add_do_property(child, "rect/size", texture_size);
-	} else if (default_texture_node_type == "Polygon2D") {
+	if (ClassDB::is_parent_class(node_class, "Control")) {
+		Size2 texture_size = texture->get_size();
+		editor_data->get_undo_redo().add_do_property(child, "rect_size", texture_size);
+	} else if (node_class == "Polygon2D") {
+		Size2 texture_size = texture->get_size();
 		Vector<Vector2> list;
 		list.push_back(Vector2(0, 0));
 		list.push_back(Vector2(texture_size.width, 0));
@@ -5923,25 +5919,9 @@ void CanvasItemEditorViewport::_perform_drop_data() {
 				}
 			}
 		} else {
-			Ref<Texture2D> texture = Ref<Texture2D>(Object::cast_to<Texture2D>(*res));
+			Ref<Texture2D> texture = Object::cast_to<Texture2D>(*res);
 			if (texture != nullptr && texture.is_valid()) {
-				Node *child;
-				if (default_texture_node_type == "Light2D") {
-					child = memnew(Light2D);
-				} else if (default_texture_node_type == "GPUParticles2D") {
-					child = memnew(GPUParticles2D);
-				} else if (default_texture_node_type == "Polygon2D") {
-					child = memnew(Polygon2D);
-				} else if (default_texture_node_type == "TouchScreenButton") {
-					child = memnew(TouchScreenButton);
-				} else if (default_texture_node_type == "TextureRect") {
-					child = memnew(TextureRect);
-				} else if (default_texture_node_type == "NinePatchRect") {
-					child = memnew(NinePatchRect);
-				} else {
-					child = memnew(Sprite2D); // default
-				}
-
+				Node *child = _make_texture_node_type(default_texture_node_type);
 				_create_nodes(target_node, child, path, drop_pos);
 			}
 		}
@@ -6074,6 +6054,30 @@ void CanvasItemEditorViewport::drop_data(const Point2 &p_point, const Variant &p
 	}
 }
 
+Node *CanvasItemEditorViewport::_make_texture_node_type(String texture_node_type) {
+	Node *node = nullptr;
+	if (texture_node_type == "Sprite2D") {
+		node = memnew(Sprite2D);
+	} else if (texture_node_type == "PointLight2D") {
+		node = memnew(PointLight2D);
+	} else if (texture_node_type == "CPUParticles2D") {
+		node = memnew(CPUParticles2D);
+	} else if (texture_node_type == "GPUParticles2D") {
+		node = memnew(GPUParticles2D);
+	} else if (texture_node_type == "Polygon2D") {
+		node = memnew(Polygon2D);
+	} else if (texture_node_type == "TouchScreenButton") {
+		node = memnew(TouchScreenButton);
+	} else if (texture_node_type == "TextureRect") {
+		node = memnew(TextureRect);
+	} else if (texture_node_type == "TextureButton") {
+		node = memnew(TextureButton);
+	} else if (texture_node_type == "NinePatchRect") {
+		node = memnew(NinePatchRect);
+	}
+	return node;
+}
+
 void CanvasItemEditorViewport::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_ENTER_TREE: {
@@ -6096,12 +6100,14 @@ CanvasItemEditorViewport::CanvasItemEditorViewport(EditorNode *p_node, CanvasIte
 	default_texture_node_type = "Sprite2D";
 	// Node2D
 	texture_node_types.push_back("Sprite2D");
-	texture_node_types.push_back("Light2D");
+	texture_node_types.push_back("PointLight2D");
+	texture_node_types.push_back("CPUParticles2D");
 	texture_node_types.push_back("GPUParticles2D");
 	texture_node_types.push_back("Polygon2D");
 	texture_node_types.push_back("TouchScreenButton");
 	// Control
 	texture_node_types.push_back("TextureRect");
+	texture_node_types.push_back("TextureButton");
 	texture_node_types.push_back("NinePatchRect");
 
 	target_node = nullptr;
