@@ -656,8 +656,10 @@ public:
 class CanvasItemEditorViewport : public Control {
 	GDCLASS(CanvasItemEditorViewport, Control);
 
-	String default_type;
-	Vector<String> types;
+	// The type of node that will be created when dropping texture into the viewport.
+	String default_texture_node_type;
+	// Node types that are available to select from when dropping texture into viewport.
+	Vector<String> texture_node_types;
 
 	Vector<String> selected_files;
 	Node *target_node;
